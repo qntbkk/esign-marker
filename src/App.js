@@ -11,8 +11,6 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
   const pdfContainerRef = useRef(null);
-  const dragStartPos = useRef({ x: 0, y: 0 });
-  const dragOffset = useRef({ x: 0, y: 0 });
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -56,45 +54,27 @@ function App() {
     setCoordinateLog((prev) => [...prev, logEntry]);
   };
 
-  const getContainerBounds = () => {
-    if (!pdfContainerRef.current) return { width: 0, height: 0 };
-    const rect = pdfContainerRef.current.getBoundingClientRect();
-    return {
-      width: pdfContainerRef.current.scrollWidth,
-      height: pdfContainerRef.current.scrollHeight,
-      rect,
-    };
-  };
-
   const handleMouseDown = (e, signatureId) => {
     e.preventDefault();
     e.stopPropagation();
 
     const signature = signatures.find((s) => s.id === signatureId);
-    if (!signature) return;
+    if (!signature || !pdfContainerRef.current) return;
 
-    const containerBounds = getContainerBounds();
-    const rect = containerBounds.rect;
+    const containerRect = pdfContainerRef.current.getBoundingClientRect();
 
-    // Calculate offset from signature's top-left corner
-    const offsetX =
-      e.clientX - rect.left - signature.x + pdfContainerRef.current.scrollLeft;
-    const offsetY =
-      e.clientY - rect.top - signature.y + pdfContainerRef.current.scrollTop;
-
-    dragOffset.current = { x: offsetX, y: offsetY };
-    dragStartPos.current = { x: signature.x, y: signature.y };
+    // Calculate offset from the signature's current position
+    const offsetX = e.clientX - containerRect.left - signature.x;
+    const offsetY = e.clientY - containerRect.top - signature.y;
 
     setDraggedSignature({
       id: signatureId,
+      offsetX: offsetX,
+      offsetY: offsetY,
       startX: signature.x,
       startY: signature.y,
     });
     setIsDragging(true);
-
-    // Add global event listeners
-    document.addEventListener("mousemove", handleMouseMove, { passive: false });
-    document.addEventListener("mouseup", handleMouseUp, { passive: false });
 
     // Prevent text selection during drag
     document.body.style.userSelect = "none";
@@ -105,43 +85,26 @@ function App() {
     (e) => {
       if (!draggedSignature || !pdfContainerRef.current) return;
 
-      e.preventDefault();
+      const containerRect = pdfContainerRef.current.getBoundingClientRect();
 
-      const containerBounds = getContainerBounds();
-      const rect = containerBounds.rect;
+      // Calculate new position relative to the container
+      let newX = e.clientX - containerRect.left - draggedSignature.offsetX;
+      let newY = e.clientY - containerRect.top - draggedSignature.offsetY;
 
-      // Calculate new position accounting for scroll
-      const newX =
-        e.clientX -
-        rect.left -
-        dragOffset.current.x +
-        pdfContainerRef.current.scrollLeft;
-      const newY =
-        e.clientY -
-        rect.top -
-        dragOffset.current.y +
-        pdfContainerRef.current.scrollTop;
+      // Get container dimensions for boundary checking
+      const containerWidth = pdfContainerRef.current.clientWidth;
+      const containerHeight = pdfContainerRef.current.clientHeight;
 
       // Constrain within container bounds
-      const constrainedX = Math.max(
-        0,
-        Math.min(containerBounds.width - 150, newX)
-      );
-      const constrainedY = Math.max(
-        0,
-        Math.min(containerBounds.height - 50, newY)
-      );
+      newX = Math.max(0, Math.min(containerWidth - 150, newX));
+      newY = Math.max(0, Math.min(containerHeight - 50, newY));
 
-      // Use requestAnimationFrame for smooth updates
-      requestAnimationFrame(() => {
-        setSignatures((prev) =>
-          prev.map((sig) =>
-            sig.id === draggedSignature.id
-              ? { ...sig, x: constrainedX, y: constrainedY }
-              : sig
-          )
-        );
-      });
+      // Update signature position
+      setSignatures((prev) =>
+        prev.map((sig) =>
+          sig.id === draggedSignature.id ? { ...sig, x: newX, y: newY } : sig
+        )
+      );
     },
     [draggedSignature]
   );
@@ -150,10 +113,10 @@ function App() {
     if (draggedSignature) {
       const signature = signatures.find((s) => s.id === draggedSignature.id);
       if (signature) {
-        // Only log if position actually changed
+        // Check if position actually changed
         const moved =
-          signature.x !== dragStartPos.current.x ||
-          signature.y !== dragStartPos.current.y;
+          signature.x !== draggedSignature.startX ||
+          signature.y !== draggedSignature.startY;
         if (moved) {
           logCoordinates(signature, "Moved");
         }
@@ -165,22 +128,24 @@ function App() {
     setIsDragging(false);
     document.body.style.userSelect = "";
     document.body.style.webkitUserSelect = "";
+  }, [draggedSignature, signatures]);
 
-    // Remove global event listeners
-    document.removeEventListener("mousemove", handleMouseMove);
-    document.removeEventListener("mouseup", handleMouseUp);
-  }, [draggedSignature, signatures, handleMouseMove]);
-
-  // Clean up event listeners on unmount
+  // Add/remove global event listeners for dragging
   useEffect(() => {
-    return () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [handleMouseMove, handleMouseUp]);
+    if (isDragging) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+
+      return () => {
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
 
   const removeSignature = (signatureId, e) => {
     e.stopPropagation();
+    e.preventDefault();
     const signature = signatures.find((s) => s.id === signatureId);
     if (signature) {
       logCoordinates(signature, "Removed");
@@ -264,19 +229,13 @@ function App() {
                     height: "700px",
                     cursor: isDragging ? "grabbing" : "default",
                   }}
-                  onScroll={() => {
-                    // Force re-render to update signature positions on scroll
-                    if (signatures.length > 0) {
-                      setSignatures((prev) => [...prev]);
-                    }
-                  }}
                 >
                   <iframe
                     src={pdfUrl}
-                    className="w-full min-h-full block"
+                    className="w-full block pointer-events-auto"
                     style={{
-                      minHeight: "800px",
-                      width: "100%",
+                      height: "100%",
+                      minHeight: "700px",
                       border: "none",
                     }}
                     title="PDF Viewer"
@@ -286,33 +245,27 @@ function App() {
                   {signatures.map((signature) => (
                     <div
                       key={signature.id}
-                      className={`absolute bg-yellow-200 border-2 border-yellow-400 rounded flex items-center justify-between px-2 py-1 text-xs font-medium select-none transition-all duration-75 ${
+                      className={`absolute bg-yellow-200 border-2 border-yellow-400 rounded flex items-center justify-between px-2 py-1 text-xs font-medium select-none z-50 ${
                         draggedSignature?.id === signature.id
-                          ? "cursor-grabbing shadow-lg scale-105 z-50"
-                          : "cursor-grab hover:shadow-md z-40"
+                          ? "cursor-grabbing shadow-lg opacity-90"
+                          : "cursor-grab hover:shadow-md hover:bg-yellow-300"
                       }`}
                       style={{
-                        left:
-                          signature.x - pdfContainerRef.current?.scrollLeft ||
-                          0,
-                        top:
-                          signature.y - pdfContainerRef.current?.scrollTop || 0,
-                        width: signature.width,
-                        height: signature.height,
-                        transform:
-                          draggedSignature?.id === signature.id
-                            ? "rotate(2deg)"
-                            : "rotate(0deg)",
+                        left: `${signature.x}px`,
+                        top: `${signature.y}px`,
+                        width: `${signature.width}px`,
+                        height: `${signature.height}px`,
+                        pointerEvents: "auto",
                       }}
                       onMouseDown={(e) => handleMouseDown(e, signature.id)}
                     >
-                      <span className="truncate pointer-events-none">
+                      <span className="truncate pointer-events-none text-gray-800">
                         {signature.label}
                       </span>
                       <button
                         onClick={(e) => removeSignature(signature.id, e)}
-                        className="ml-1 text-red-600 hover:text-red-800 hover:bg-red-100 rounded p-1 transition-colors"
-                        style={{ pointerEvents: "auto" }}
+                        className="ml-1 text-red-600 hover:text-red-800 hover:bg-red-100 rounded p-1 transition-colors flex-shrink-0"
+                        onMouseDown={(e) => e.stopPropagation()}
                       >
                         <Trash2 size={12} />
                       </button>
