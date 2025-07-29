@@ -1,6 +1,6 @@
 {
-  "short_name": "React App",
-  "name": "Create React App Sample",
+  "short_name": "eSign Marker",
+  "name": "eSign Marker - PDF Signature Placement Tool",
   "icons": [
     {
       "src": "favicon.ico",
