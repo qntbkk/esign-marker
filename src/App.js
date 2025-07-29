@@ -11,6 +11,7 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
   const pdfContainerRef = useRef(null);
+  const pdfWrapperRef = useRef(null);
 
   const handleFileUpload = (event) => {
     const file = event.target.files[0];
@@ -59,13 +60,17 @@ function App() {
     e.stopPropagation();
 
     const signature = signatures.find((s) => s.id === signatureId);
-    if (!signature || !pdfContainerRef.current) return;
+    if (!signature || !pdfWrapperRef.current) return;
 
-    const containerRect = pdfContainerRef.current.getBoundingClientRect();
+    const wrapperRect = pdfWrapperRef.current.getBoundingClientRect();
+    const containerScrollLeft = pdfContainerRef.current?.scrollLeft || 0;
+    const containerScrollTop = pdfContainerRef.current?.scrollTop || 0;
 
-    // Calculate offset from the signature's current position
-    const offsetX = e.clientX - containerRect.left - signature.x;
-    const offsetY = e.clientY - containerRect.top - signature.y;
+    // Calculate offset from the signature's current position including scroll
+    const offsetX =
+      e.clientX - wrapperRect.left - signature.x + containerScrollLeft;
+    const offsetY =
+      e.clientY - wrapperRect.top - signature.y + containerScrollTop;
 
     setDraggedSignature({
       id: signatureId,
@@ -83,21 +88,36 @@ function App() {
 
   const handleMouseMove = useCallback(
     (e) => {
-      if (!draggedSignature || !pdfContainerRef.current) return;
+      if (
+        !draggedSignature ||
+        !pdfWrapperRef.current ||
+        !pdfContainerRef.current
+      )
+        return;
 
-      const containerRect = pdfContainerRef.current.getBoundingClientRect();
+      const wrapperRect = pdfWrapperRef.current.getBoundingClientRect();
+      const containerScrollLeft = pdfContainerRef.current.scrollLeft;
+      const containerScrollTop = pdfContainerRef.current.scrollTop;
 
-      // Calculate new position relative to the container
-      let newX = e.clientX - containerRect.left - draggedSignature.offsetX;
-      let newY = e.clientY - containerRect.top - draggedSignature.offsetY;
+      // Calculate new position relative to the PDF content (including scroll)
+      let newX =
+        e.clientX -
+        wrapperRect.left -
+        draggedSignature.offsetX +
+        containerScrollLeft;
+      let newY =
+        e.clientY -
+        wrapperRect.top -
+        draggedSignature.offsetY +
+        containerScrollTop;
 
-      // Get container dimensions for boundary checking
-      const containerWidth = pdfContainerRef.current.clientWidth;
-      const containerHeight = pdfContainerRef.current.clientHeight;
+      // Get wrapper dimensions for boundary checking
+      const wrapperWidth = pdfWrapperRef.current.scrollWidth;
+      const wrapperHeight = pdfWrapperRef.current.scrollHeight;
 
-      // Constrain within container bounds
-      newX = Math.max(0, Math.min(containerWidth - 150, newX));
-      newY = Math.max(0, Math.min(containerHeight - 50, newY));
+      // Constrain within wrapper bounds
+      newX = Math.max(0, Math.min(wrapperWidth - 150, newX));
+      newY = Math.max(0, Math.min(wrapperHeight - 50, newY));
 
       // Update signature position
       setSignatures((prev) =>
@@ -230,47 +250,59 @@ function App() {
                     cursor: isDragging ? "grabbing" : "default",
                   }}
                 >
-                  <iframe
-                    src={pdfUrl}
-                    className="w-full block pointer-events-auto"
+                  {/* PDF Wrapper - this contains both PDF and signatures */}
+                  <div
+                    ref={pdfWrapperRef}
+                    className="relative"
                     style={{
-                      height: "100%",
-                      minHeight: "700px",
-                      border: "none",
+                      minHeight: "1000px", // Ensure enough height for PDF content
+                      minWidth: "100%",
                     }}
-                    title="PDF Viewer"
-                  />
-
-                  {/* Signature Placeholders */}
-                  {signatures.map((signature) => (
-                    <div
-                      key={signature.id}
-                      className={`absolute bg-yellow-200 border-2 border-yellow-400 rounded flex items-center justify-between px-2 py-1 text-xs font-medium select-none z-50 ${
-                        draggedSignature?.id === signature.id
-                          ? "cursor-grabbing shadow-lg opacity-90"
-                          : "cursor-grab hover:shadow-md hover:bg-yellow-300"
-                      }`}
+                  >
+                    <iframe
+                      src={pdfUrl}
+                      className="w-full h-full absolute inset-0"
                       style={{
-                        left: `${signature.x}px`,
-                        top: `${signature.y}px`,
-                        width: `${signature.width}px`,
-                        height: `${signature.height}px`,
+                        height: "1000px",
+                        minHeight: "1000px",
+                        border: "none",
                         pointerEvents: "auto",
                       }}
-                      onMouseDown={(e) => handleMouseDown(e, signature.id)}
-                    >
-                      <span className="truncate pointer-events-none text-gray-800">
-                        {signature.label}
-                      </span>
-                      <button
-                        onClick={(e) => removeSignature(signature.id, e)}
-                        className="ml-1 text-red-600 hover:text-red-800 hover:bg-red-100 rounded p-1 transition-colors flex-shrink-0"
-                        onMouseDown={(e) => e.stopPropagation()}
+                      title="PDF Viewer"
+                      scrolling="no" // Prevent iframe from handling its own scrolling
+                    />
+
+                    {/* Signature Placeholders - positioned within the PDF wrapper */}
+                    {signatures.map((signature) => (
+                      <div
+                        key={signature.id}
+                        className={`absolute bg-yellow-200 border-2 border-yellow-400 rounded flex items-center justify-between px-2 py-1 text-xs font-medium select-none z-50 ${
+                          draggedSignature?.id === signature.id
+                            ? "cursor-grabbing shadow-lg opacity-90"
+                            : "cursor-grab hover:shadow-md hover:bg-yellow-300"
+                        }`}
+                        style={{
+                          left: `${signature.x}px`,
+                          top: `${signature.y}px`,
+                          width: `${signature.width}px`,
+                          height: `${signature.height}px`,
+                          pointerEvents: "auto",
+                        }}
+                        onMouseDown={(e) => handleMouseDown(e, signature.id)}
                       >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  ))}
+                        <span className="truncate pointer-events-none text-gray-800">
+                          {signature.label}
+                        </span>
+                        <button
+                          onClick={(e) => removeSignature(signature.id, e)}
+                          className="ml-1 text-red-600 hover:text-red-800 hover:bg-red-100 rounded p-1 transition-colors flex-shrink-0"
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
